@@ -1,4 +1,68 @@
-# 🚀 Guía de Despliegue: Bsale ↔ Claro Shop Sync
+# 🚀 Opciones de Despliegue (Segun tu infraestructura)
+
+## OPCION A: Puerto Alternativo (Recomendada si tienes nginx en 80/443)
+**Puertos usados:** 8080 (HTTP), 8443 (HTTPS), 3001 (backend interno)
+**Pros:** No afecta nginx existente, rapido de configurar
+**Contras:** URL con puerto (:8080)
+
+```bash
+# En docker-compose.yml, comenta la seccion "OPCION C" y descomenta "OPCION A"
+# Luego ejecuta:
+docker-compose up -d --build
+# Accede a: http://TU_IP:8080
+```
+
+## OPCION B: Integrar con Nginx Existente (Recomendada para produccion)
+**Puertos usados:** Ninguno nuevo (usa tu nginx actual)
+**Pros:** URL limpia (subdominio), usa tu SSL existente
+**Contras:** Requiere editar configuracion de nginx del servidor
+
+```bash
+# 1. Despliega SOLO backend + base de datos (sin nginx container)
+docker-compose up -d postgres redis backend
+
+# 2. Copia la configuracion a tu nginx existente:
+sudo cp nginx/nginx-existing.conf /etc/nginx/sites-available/bsale-claro-sync
+sudo ln -s /etc/nginx/sites-available/bsale-claro-sync /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# 3. Opcional: Configura subdominio con SSL
+# sudo certbot --nginx -d bsale-sync.tu-dominio.com
+```
+
+## OPCION C: Nginx Propio (Solo si NO tienes nginx en el droplet)
+**Puertos usados:** 80, 443
+**Pros:** Todo autocontenido
+**Contras:** Puede chocar con nginx existente
+
+```bash
+# Usa la configuracion por defecto
+docker-compose up -d --build
+```
+
+---
+
+## 🌐 Configuracion de Webhooks
+
+### Bsale Webhook URL
+```
+# Segun la opcion que elijas:
+Opcion A: http://TU_IP:8080/webhooks/bsale
+Opcion B: https://bsale-sync.tu-dominio.com/webhooks/bsale
+Opcion C: http://TU_IP/webhooks/bsale
+```
+
+### Claro Shop Webhook URL
+```
+# Segun la opcion que elijas:
+Opcion A: http://TU_IP:8080/webhooks/claroshop
+Opcion B: https://bsale-sync.tu-dominio.com/webhooks/claroshop
+Opcion C: http://TU_IP/webhooks/claroshop
+```
+
+> **Importante:** La variable `PUBLIC_URL` en `.env` debe coincidir con la URL que uses.
+
+---
 ## Proyecto ID: `PRJ-BSALE-CLARO-2024-001`
 
 ---

@@ -1,7 +1,7 @@
 version: "3.8"
 
 services:
-  # ── PostgreSQL ──────────────────────────────────────
+  # ── PostgreSQL (SOLO red interna, NO expuesto al host) ──
   postgres:
     image: postgres:15-alpine
     container_name: bcs-postgres
@@ -13,23 +13,31 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "127.0.0.1:5432:5432"
+    # NO ports: - Solo accesible dentro de la red Docker
+    # Si necesitas acceso externo para debugging, usa:
+    # ports:
+    #   - "127.0.0.1:5433:5432"  # Puerto alternativo 5433
+    networks:
+      - bcs-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-bcsync} -d ${DB_NAME:-bsale_claroshop}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ── Redis (colas y cache) ───────────────────────────
+  # ── Redis (SOLO red interna, NO expuesto al host) ──
   redis:
     image: redis:7-alpine
     container_name: bcs-redis
     restart: unless-stopped
     volumes:
       - redis_data:/data
-    ports:
-      - "127.0.0.1:6379:6379"
+    # NO ports: - Solo accesible dentro de la red Docker
+    # Si necesitas acceso externo para debugging, usa:
+    # ports:
+    #   - "127.0.0.1:6380:6379"  # Puerto alternativo 6380
+    networks:
+      - bcs-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -61,13 +69,17 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-wh_secret}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
+      # URL publica para webhooks (debe ser accesible desde internet)
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - bcs-network
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3001:3000"  # Puerto alternativo 3001 para evitar conflictos
     volumes:
       - ./logs:/app/logs
     command: >
@@ -84,7 +96,32 @@ services:
       - backend
     # Se sirve via Nginx, no expone puerto directo
 
-  # ── Nginx (Proxy Inverso + SSL) ─────────────────────
+  # ── Nginx (Proxy Inverso) ───────────────────────────
+  # OPCION A: Puerto alternativo (si tienes nginx ya en 80/443)
+  # Descomenta esta seccion y comenta la de abajo si necesitas puerto alternativo
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: bcs-nginx
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8080:80"      # Puerto alternativo HTTP
+  #     - "8443:443"     # Puerto alternativo HTTPS
+  #   volumes:
+  #     - ./nginx/nginx-alt.conf:/etc/nginx/nginx.conf:ro
+  #     - ./nginx/ssl:/etc/nginx/ssl:ro
+  #   depends_on:
+  #     - backend
+  #     - frontend
+  #   networks:
+  #     - bcs-network
+
+  # OPCION B: Integrar con nginx existente (recomendado)
+  # Si ya tienes nginx corriendo en el droplet, usa esto:
+  # 1. Copia nginx/nginx-existing.conf a tu nginx existente
+  # 2. Recarga nginx: sudo nginx -s reload
+  # 3. Esta integracion NO necesita contenedor nginx propio
+
+  # OPCION C: Nginx propio en puerto estandar (solo si NO hay nginx existente)
   nginx:
     image: nginx:alpine
     container_name: bcs-nginx
@@ -98,7 +135,14 @@ services:
     depends_on:
       - backend
       - frontend
+    networks:
+      - bcs-network
 
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  bcs-network:
+    driver: bridge
+    name: bsale-claroshop-network  # Red con nombre para facil identificacion
