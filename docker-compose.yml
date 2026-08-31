@@ -1,0 +1,104 @@
+version: "3.8"
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: bcs-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-bcsync}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-bcsync_secret}
+      POSTGRES_DB: ${DB_NAME:-bsale_claroshop}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-bcsync} -d ${DB_NAME:-bsale_claroshop}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (colas y cache) ───────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: bcs-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend API + Workers ───────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bcs-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-bcsync}
+      DB_PASSWORD: ${DB_PASSWORD:-bcsync_secret}
+      DB_NAME: ${DB_NAME:-bsale_claroshop}
+      REDIS_URL: redis://redis:6379
+      BSALE_BASE_URL: ${BSALE_BASE_URL:-https://api.bsale.io/v1}
+  BSALE_CLIENT_ID: ${BSALE_CLIENT_ID}
+      BSALE_CLIENT_SECRET: ${BSALE_CLIENT_SECRET}
+      CLAROSHOP_API_KEY: ${CLAROSHOP_API_KEY}
+      CLAROSHOP_BASE_URL: ${CLAROSHOP_BASE_URL:-https://api.t1.com}
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-wh_secret}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./logs:/app/logs
+    command: >
+      sh -c "npm run migrate && npm run start"
+
+  # ── Frontend (React Panel) ──────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bcs-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    # Se sirve via Nginx, no expone puerto directo
+
+  # ── Nginx (Proxy Inverso + SSL) ─────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: bcs-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  postgres_data:
+  redis_data:
