@@ -1,7 +1,6 @@
 version: "3.8"
 
 services:
-  # ── PostgreSQL (SOLO red interna, NO expuesto al host) ──
   postgres:
     image: postgres:15-alpine
     container_name: bcs-postgres
@@ -13,10 +12,6 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
-    # NO ports: - Solo accesible dentro de la red Docker
-    # Si necesitas acceso externo para debugging, usa:
-    # ports:
-    #   - "127.0.0.1:5433:5432"  # Puerto alternativo 5433
     networks:
       - bcs-network
     healthcheck:
@@ -25,17 +20,12 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Redis (SOLO red interna, NO expuesto al host) ──
   redis:
     image: redis:7-alpine
     container_name: bcs-redis
     restart: unless-stopped
     volumes:
       - redis_data:/data
-    # NO ports: - Solo accesible dentro de la red Docker
-    # Si necesitas acceso externo para debugging, usa:
-    # ports:
-    #   - "127.0.0.1:6380:6379"  # Puerto alternativo 6380
     networks:
       - bcs-network
     healthcheck:
@@ -44,7 +34,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Backend API + Workers ───────────────────────────
   backend:
     build:
       context: ./backend
@@ -60,16 +49,14 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-bcsync_secret}
       DB_NAME: ${DB_NAME:-bsale_claroshop}
       REDIS_URL: redis://redis:6379
+      BSALE_ACCESS_TOKEN: ${BSALE_ACCESS_TOKEN}
       BSALE_BASE_URL: ${BSALE_BASE_URL:-https://api.bsale.io/v1}
-  BSALE_CLIENT_ID: ${BSALE_CLIENT_ID}
-      BSALE_CLIENT_SECRET: ${BSALE_CLIENT_SECRET}
       CLAROSHOP_API_KEY: ${CLAROSHOP_API_KEY}
-      CLAROSHOP_BASE_URL: ${CLAROSHOP_BASE_URL:-https://api.t1.com}
+      CLAROSHOP_BASE_URL: ${CLAROSHOP_BASE_URL:-https://api.claroshop.com}
       JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-wh_secret}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
-      # URL publica para webhooks (debe ser accesible desde internet)
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
     depends_on:
       postgres:
@@ -79,13 +66,10 @@ services:
     networks:
       - bcs-network
     ports:
-      - "127.0.0.1:3001:3000"  # Puerto alternativo 3001 para evitar conflictos
+      - "127.0.0.1:3001:3000"
     volumes:
       - ./logs:/app/logs
-    command: >
-      sh -c "npm run migrate && npm run start"
 
-  # ── Frontend (React Panel) ──────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -94,49 +78,10 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
-    # Se sirve via Nginx, no expone puerto directo
-
-  # ── Nginx (Proxy Inverso) ───────────────────────────
-  # OPCION A: Puerto alternativo (si tienes nginx ya en 80/443)
-  # Descomenta esta seccion y comenta la de abajo si necesitas puerto alternativo
-  # nginx:
-  #   image: nginx:alpine
-  #   container_name: bcs-nginx
-  #   restart: unless-stopped
-  #   ports:
-  #     - "8080:80"      # Puerto alternativo HTTP
-  #     - "8443:443"     # Puerto alternativo HTTPS
-  #   volumes:
-  #     - ./nginx/nginx-alt.conf:/etc/nginx/nginx.conf:ro
-  #     - ./nginx/ssl:/etc/nginx/ssl:ro
-  #   depends_on:
-  #     - backend
-  #     - frontend
-  #   networks:
-  #     - bcs-network
-
-  # OPCION B: Integrar con nginx existente (recomendado)
-  # Si ya tienes nginx corriendo en el droplet, usa esto:
-  # 1. Copia nginx/nginx-existing.conf a tu nginx existente
-  # 2. Recarga nginx: sudo nginx -s reload
-  # 3. Esta integracion NO necesita contenedor nginx propio
-
-  # OPCION C: Nginx propio en puerto estandar (solo si NO hay nginx existente)
-  nginx:
-    image: nginx:alpine
-    container_name: bcs-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - backend
-      - frontend
     networks:
       - bcs-network
+    ports:
+      - "8080:80"
 
 volumes:
   postgres_data:
@@ -145,4 +90,4 @@ volumes:
 networks:
   bcs-network:
     driver: bridge
-    name: bsale-claroshop-network  # Red con nombre para facil identificacion
+    name: bsale-claroshop-network
