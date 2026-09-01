@@ -1,13 +1,13 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import { generateToken } from "../middleware/auth";
+import { generateToken, authMiddleware } from "../middleware/auth";
 import { AppConfig, DEFAULT_CONFIGS } from "../models/config";
 
 const router = Router();
 
 /**
  * POST /api/config/login
- * Login para el panel de administración.
+ * Login para el panel de administración. SIN auth (obvio).
  */
 router.post("/login", async (req, res, next) => {
   try {
@@ -29,9 +29,9 @@ router.post("/login", async (req, res, next) => {
 
 /**
  * GET /api/config
- * Obtener configuración del sistema.
+ * Obtener configuración del sistema. CON auth.
  */
-router.get("/", async (_req, res, next) => {
+router.get("/", authMiddleware, async (_req, res, next) => {
   try {
     const configs = await AppConfig.findAll();
     const configMap: Record<string, string> = {};
@@ -50,9 +50,9 @@ router.get("/", async (_req, res, next) => {
 
 /**
  * PUT /api/config
- * Actualizar configuración.
+ * Actualizar configuración. CON auth.
  */
-router.put("/", async (req, res, next) => {
+router.put("/", authMiddleware, async (req, res, next) => {
   try {
     const updates = req.body;
     for (const [key, value] of Object.entries(updates)) {

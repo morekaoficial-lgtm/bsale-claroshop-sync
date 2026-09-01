@@ -53,12 +53,13 @@ app.use("/api/", apiLimiter);
 // ── Webhooks (sin auth, con verificación de firma propia) ──
 app.use("/webhooks", webhookRoutes);
 
-// ── API REST (protegida con JWT) ──
+// ── API REST ──
+// Config: login SIN auth, resto CON auth (manejado en el router)
+app.use("/api/config", configRoutes);
 app.use("/api/dashboard", authMiddleware, dashboardRoutes);
 app.use("/api/products", authMiddleware, productRoutes);
 app.use("/api/orders", authMiddleware, orderRoutes);
 app.use("/api/sync", authMiddleware, syncRoutes);
-app.use("/api/config", authMiddleware, configRoutes);
 app.use("/api/logs", authMiddleware, logRoutes);
 
 // Health check

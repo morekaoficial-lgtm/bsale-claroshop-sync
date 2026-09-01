@@ -14,6 +14,29 @@ export class ProductSyncService {
   }
 
   /**
+   * Publica productos seleccionados de Bsale a Claroshop (modo manual desde panel).
+   */
+  async publishToClaroshop(variantIds: number[]): Promise<
+    Array<{ variantId: number; success: boolean; result?: string; error?: string }>
+  > {
+    const results: Array<{ variantId: number; success: boolean; result?: string; error?: string }> = [];
+
+    for (const variantId of variantIds) {
+      try {
+        const variant = await this.bsale.getVariant(variantId);
+        const product = await this.bsale.getProduct(variant.productId);
+        const result = await this.syncVariant(product, variant);
+        results.push({ variantId, success: result === "created" || result === "updated", result });
+      } catch (err: any) {
+        logger.error(`Error publicando variante ${variantId}: ${err.message}`);
+        results.push({ variantId, success: false, error: err.message });
+      }
+    }
+
+    return results;
+  }
+
+  /**
    * Sincroniza TODOS los productos activos de Bsale hacia Claro Shop.
    * Para uso en sync masivo o scheduler.
    */

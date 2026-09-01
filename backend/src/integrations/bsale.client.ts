@@ -135,6 +135,21 @@ export class BsaleClient {
     return res.data.items || [];
   }
 
+  // ── Descripción Web (Market Info) ──
+  async getMarketInfo(productId: number): Promise<any> {
+    const res = await this.client.get(`/products/market_info/${productId}.json`);
+    return res.data;
+  }
+
+  async getMarketPictures(productId: number): Promise<any[]> {
+    try {
+      const res = await this.client.get(`/products/market_info/${productId}/pictures.json`);
+      return res.data.items || res.data.data || [];
+    } catch {
+      return [];
+    }
+  }
+
   // ── Documentos / Órdenes ──
   async createDocument(documentData: any): Promise<any> {
     const res = await this.client.post("/documents.json", documentData);
