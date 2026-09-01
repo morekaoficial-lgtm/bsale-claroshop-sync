@@ -20,10 +20,9 @@ productSyncQueue.process("retry-product", async (job) => {
 productSyncQueue.process("webhook-product", async (job) => {
   const service = new ProductSyncService();
   const { variantId } = job.data;
-  // Obtener variante completa de Bsale y sincronizar
   const bsale = new (await import("../integrations/bsale.client")).BsaleClient();
-  const variant = await bsale.getVariant(variantId, ["product"]);
-  const product = variant.product || await bsale.getProduct(variant.productId);
+  const variant = await bsale.getVariant(variantId);
+  const product = await bsale.getProduct(variant.productId);
   return service.syncVariant(product, variant);
 });
 

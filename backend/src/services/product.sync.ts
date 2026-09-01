@@ -106,7 +106,7 @@ export class ProductSyncService {
           price: price,
           status: variant.state === 0 ? "synced" : "inactive",
           last_sync_at: new Date(),
-          sync_error: null,
+          sync_error: undefined,
         });
 
         await SyncLog.create({
@@ -184,8 +184,8 @@ export class ProductSyncService {
    */
   async retryProduct(bsaleVariantId: number): Promise<boolean> {
     try {
-      const variant = await this.bsale.getVariant(bsaleVariantId, ["product"]);
-      const product = variant.product || await this.bsale.getProduct(variant.productId);
+      const variant = await this.bsale.getVariant(bsaleVariantId);
+      const product = await this.bsale.getProduct(variant.productId);
       const result = await this.syncVariant(product, variant);
       return result === "created" || result === "updated";
     } catch (err: any) {

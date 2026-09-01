@@ -58,8 +58,8 @@ export class ClaroshopClient {
     });
 
     this.client.interceptors.response.use(
-      (response) => response,
-      (error) => {
+      (response: any) => response,
+      (error: any) => {
         logger.error("Claro Shop API error:", error.response?.data || error.message);
         throw error;
       }

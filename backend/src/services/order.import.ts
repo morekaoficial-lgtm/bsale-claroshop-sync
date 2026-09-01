@@ -80,7 +80,7 @@ export class OrderImportService {
   /**
    * Crea un documento de pedido en Bsale.
    */
-  private async createBsaleDocument(order: Order, csOrder: any): Promise<void> {
+  public async createBsaleDocument(order: Order, csOrder: any): Promise<void> {
     const officeId = parseInt(process.env.BSALE_OFFICE_ID || "1");
     const priceListId = parseInt(process.env.BSALE_PRICE_LIST_ID || "1");
 

@@ -2,7 +2,7 @@ import winston from "winston";
 import DailyRotateFile from "winston-daily-rotate-file";
 import path from "path";
 
-const { combine, timestamp, json, errors } = winston.format;
+const { combine, timestamp, json } = winston.format;
 
 // Transport para consola (siempre)
 const consoleTransport = new winston.transports.Console({
@@ -25,7 +25,8 @@ const fileTransport = new DailyRotateFile({
   format: combine(timestamp(), json()),
 });
 
-export const logger = winston.createLogger({
+// Logger base
+const baseLogger = winston.createLogger({
   level: process.env.LOG_LEVEL || "info",
   defaultMeta: { service: "bsale-claroshop-sync" },
   transports: [consoleTransport, fileTransport],
@@ -34,25 +35,30 @@ export const logger = winston.createLogger({
 });
 
 // Helper para emitir logs a Socket.IO (dashboard en tiempo real)
-export function emitLog(level: string, message: string, meta?: Record<string, unknown>) {
-  // Se importa dinámicamente para evitar ciclo circular
+function emitLog(level: string, message: string, meta?: Record<string, unknown>) {
   try {
     const { io } = require("../app");
     io?.emit("log", { level, message, meta, timestamp: new Date().toISOString() });
   } catch {
-    // Socket.IO aún no inicializado
+    // Socket.IO aun no inicializado
   }
 }
 
-// Sobrescribir logger.info para emitir a Socket.IO
-const originalInfo = logger.info.bind(logger);
-logger.info = (message: string, meta?: any) => {
-  emitLog("info", message, meta);
-  return originalInfo(message, meta);
-};
-
-const originalError = logger.error.bind(logger);
-logger.error = (message: string, meta?: any) => {
-  emitLog("error", message, meta);
-  return originalError(message, meta);
+// Logger wrapper que emite a Socket.IO
+export const logger = {
+  info: (message: string, meta?: any) => {
+    emitLog("info", message, meta);
+    baseLogger.info(message, meta);
+  },
+  error: (message: string, meta?: any) => {
+    emitLog("error", message, meta);
+    baseLogger.error(message, meta);
+  },
+  warn: (message: string, meta?: any) => {
+    emitLog("warn", message, meta);
+    baseLogger.warn(message, meta);
+  },
+  debug: (message: string, meta?: any) => {
+    baseLogger.debug(message, meta);
+  },
 };

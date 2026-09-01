@@ -52,15 +52,15 @@ export class BsaleClient {
       timeout: 30000,
     });
 
-    // Rate limit: 8 req/segundo según changelog Bsale 10/2025
-    this.client.interceptors.request.use(async (config) => {
+    // Rate limit: 8 req/segundo segun changelog Bsale 10/2025
+    this.client.interceptors.request.use(async (config: any) => {
       await this.rateLimitDelay();
       return config;
     });
 
     this.client.interceptors.response.use(
-      (response) => response,
-      (error) => {
+      (response: any) => response,
+      (error: any) => {
         logger.error("Bsale API error:", error.response?.data || error.message);
         throw error;
       }
