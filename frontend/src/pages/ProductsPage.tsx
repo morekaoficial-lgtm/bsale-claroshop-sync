@@ -141,21 +141,33 @@ export default function ProductsPage() {
     }
   };
 
+  const [publishErrors, setPublishErrors] = useState<Array<{ variantId: number; error?: string }>>([]);
+
   const publishSelected = async () => {
     if (selectedIds.size === 0) return;
     setPublishing(true);
     setPublishResult(null);
+    setPublishErrors([]);
     try {
       const res = await axios.post(
         `${API_URL}/api/products/publish`,
         { variantIds: Array.from(selectedIds) },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      const results = res.data.results as Array<{ success: boolean; error?: string }>;
+      const results = res.data.results as Array<{ variantId: number; success: boolean; error?: string }>;
       const ok = results.filter((r) => r.success).length;
-      const fail = results.filter((r) => !r.success).length;
+      const failures = results.filter((r) => !r.success);
+      const fail = failures.length;
+      
       setPublishResult(`✅ ${ok} publicados, ❌ ${fail} errores`);
-      setTimeout(() => fetchAvailable(), 2000);
+      setPublishErrors(failures);
+      
+      if (fail > 0) {
+        // No recargar inmediatamente si hay errores, para que el usuario los vea
+        setTimeout(() => fetchAvailable(), 8000);
+      } else {
+        setTimeout(() => fetchAvailable(), 2000);
+      }
     } catch (err: any) {
       setPublishResult("❌ Error al publicar: " + (err.response?.data?.error || err.message));
     } finally {
@@ -338,15 +350,36 @@ export default function ProductsPage() {
           </div>
 
           {publishResult && (
-            <div style={{ 
-              padding: 10, 
-              background: publishResult.includes("❌") ? "#f8d7da" : "#e8f8f5", 
-              borderRadius: 6, 
-              marginBottom: 12, 
-              color: publishResult.includes("❌") ? "#721c24" : "#27ae60", 
-              fontWeight: 600 
-            }}>
-              {publishResult}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ 
+                padding: 10, 
+                background: publishResult.includes("❌") ? "#f8d7da" : "#e8f8f5", 
+                borderRadius: 6, 
+                color: publishResult.includes("❌") ? "#721c24" : "#27ae60", 
+                fontWeight: 600 
+              }}>
+                {publishResult}
+              </div>
+              {publishErrors.length > 0 && (
+                <div style={{ 
+                  marginTop: 8, 
+                  padding: 12, 
+                  background: "#fff3cd", 
+                  borderRadius: 6, 
+                  border: "1px solid #ffc107",
+                  maxHeight: 200,
+                  overflow: "auto",
+                }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "#856404" }}>
+                    ⚠️ Errores detallados:
+                  </div>
+                  {publishErrors.map((err) => (
+                    <div key={err.variantId} style={{ fontSize: 12, marginBottom: 6, color: "#721c24" }}>
+                      • Variante <strong>#{err.variantId}</strong>: {err.error || "Error desconocido"}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
