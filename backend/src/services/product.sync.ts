@@ -16,6 +16,7 @@ export class ProductSyncService {
   /**
    * Publica productos seleccionados de Bsale a Claroshop (modo manual desde panel).
    * Usa descripción web e imágenes de Bsale API v2 (market_info).
+   * Si getProduct V1 falla (404), usa solo market_info V2 + variant.
    */
   async publishToClaroshop(variantIds: number[]): Promise<
     Array<{ variantId: number; success: boolean; result?: string; error?: string }>
@@ -34,11 +35,18 @@ export class ProductSyncService {
     for (const variantId of variantIds) {
       try {
         const variant = await this.bsale.getVariant(variantId);
-        const product = await this.bsale.getProduct(variant.productId);
-        
-        // Buscar market_info v2 para este producto
         const marketInfo = marketInfoMap.get(variant.productId);
-        const webDescription = marketInfo?.description || product.description || variant.description || product.name;
+
+        // Intentar obtener producto V1, pero no fallar si da 404
+        let product: any = null;
+        try {
+          product = await this.bsale.getProduct(variant.productId);
+        } catch (err: any) {
+          logger.warn(`[publish] getProduct ${variant.productId} falló para variante ${variantId}: ${err.message}`);
+        }
+
+        // Usar descripción web de V2, fallback a V1 o variant
+        const webDescription = marketInfo?.description || product?.description || variant.description || product?.name || variant.description || "Producto";
         const webImages: string[] = [];
         if (marketInfo?.urlImg) webImages.push(marketInfo.urlImg);
         if (Array.isArray(marketInfo?.pictures)) {
@@ -47,7 +55,12 @@ export class ProductSyncService {
           }
         }
 
-        const result = await this.syncVariant(product, variant, webDescription, webImages);
+        const result = await this.syncVariant(
+          product || { id: variant.productId, name: variant.description || String(variant.productId) },
+          variant,
+          webDescription,
+          webImages
+        );
         results.push({ variantId, success: result === "created" || result === "updated", result });
       } catch (err: any) {
         logger.error(`Error publicando variante ${variantId}: ${err.message}`);
@@ -215,12 +228,39 @@ export class ProductSyncService {
 
   /**
    * Reintentar sincronización de un producto específico.
+   * Si getProduct V1 falla, usa market_info V2.
    */
   async retryProduct(bsaleVariantId: number): Promise<boolean> {
     try {
       const variant = await this.bsale.getVariant(bsaleVariantId);
-      const product = await this.bsale.getProduct(variant.productId);
-      const result = await this.syncVariant(product, variant);
+
+      // Intentar obtener market_info V2
+      let marketInfo: any = null;
+      try {
+        const list = await this.bsale.getMarketInfoListV2(50, 0);
+        marketInfo = list.find((mi: any) => mi.productId === variant.productId) || null;
+      } catch {
+        // ignorar
+      }
+
+      // Intentar obtener producto V1, fallback a dummy
+      let product: any = null;
+      try {
+        product = await this.bsale.getProduct(variant.productId);
+      } catch {
+        product = { id: variant.productId, name: variant.description || String(variant.productId) };
+      }
+
+      const description = marketInfo?.description || product?.description || variant.description || product?.name || "Producto";
+      const images: string[] = [];
+      if (marketInfo?.urlImg) images.push(marketInfo.urlImg);
+      if (Array.isArray(marketInfo?.pictures)) {
+        for (const pic of marketInfo.pictures) {
+          if (pic.href) images.push(pic.href);
+        }
+      }
+
+      const result = await this.syncVariant(product, variant, description, images);
       return result === "created" || result === "updated";
     } catch (err: any) {
       logger.error(`Error en retryProduct ${bsaleVariantId}: ${err.message}`);
