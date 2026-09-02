@@ -138,19 +138,22 @@ export class BsaleClient {
     return res.data.items || [];
   }
 
-  // ── Descripción Web (Market Info) ──
-  async getMarketInfo(productId: number): Promise<any> {
-    const res = await this.client.get(`/products/${productId}/market_info.json`);
-    return res.data;
+  // ── Descripción Web V2 (market_info) ──
+  async getMarketInfoV2(marketInfoId: number): Promise<any> {
+    const res = await this.client.get(`/v2/products/market_info/${marketInfoId}.json`);
+    return res.data?.data || null;
   }
 
-  async getMarketPictures(productId: number): Promise<any[]> {
-    try {
-      const res = await this.client.get(`/products/market_info/${productId}/pictures.json`);
-      return res.data.items || res.data.data || [];
-    } catch {
-      return [];
-    }
+  async getMarketInfoListV2(limit = 50, offset = 0): Promise<any[]> {
+    const res = await this.client.get(`/v2/products/list/market_info.json`, {
+      params: { limit, offset },
+    });
+    return res.data?.data || [];
+  }
+
+  async getMarketInfoPicturesV2(marketInfoId: number): Promise<any[]> {
+    const res = await this.client.get(`/v2/products/market_info/${marketInfoId}/pictures.json`);
+    return res.data?.data || [];
   }
 
   // ── Documentos / Órdenes ──

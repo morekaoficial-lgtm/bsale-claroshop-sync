@@ -74,9 +74,8 @@ router.post("/sync-all", async (_req, res, next) => {
 
 /**
  * GET /api/products/available
- * Lista productos de Bsale activos que aún NO están en Claroshop.
- * NOTA: Bsale API v1 no expone descripción web ni imágenes en el endpoint base.
- * Se muestran todos los productos activos no mapeados para que el usuario seleccione.
+ * Lista productos de Bsale con DESCRIPCIÓN WEB + IMÁGENES (v2 market_info) que aún NO están en Claroshop.
+ * Usa Bsale API v2 para obtener descripción web e imágenes.
  */
 router.get("/available", async (req, res, next) => {
   try {
@@ -84,14 +83,15 @@ router.get("/available", async (req, res, next) => {
     const limit = parseInt(req.query.limit as string) || 25;
     const search = (req.query.search as string) || "";
 
-    logger.info(`[available] Buscando productos de Bsale - page=${page}, limit=${limit}, search="${search}"`);
+    logger.info(`[available] Buscando productos de Bsale con desc web (v2) - page=${page}, limit=${limit}, search="${search}"`);
 
-    // Obtener productos de Bsale (activos)
     const bsale = new BsaleClient();
-    const bsaleProducts = await bsale.getProducts(200, 0, 0); // state=0 = activos
-    logger.info(`[available] Bsale devolvió ${bsaleProducts.length} productos activos`);
 
-    // Obtener IDs ya mapeados
+    // Obtener market_info de Bsale v2 (productos con descripción web)
+    const marketInfoList = await bsale.getMarketInfoListV2(200, 0);
+    logger.info(`[available] Bsale v2 devolvió ${marketInfoList.length} market_info`);
+
+    // Obtener IDs ya mapeados en Claroshop
     const mappedIds = await ProductMapping.findAll({
       attributes: ["bsale_variant_id"],
     });
@@ -100,42 +100,67 @@ router.get("/available", async (req, res, next) => {
 
     const availableProducts: any[] = [];
 
-    for (const product of bsaleProducts) {
+    for (const mi of marketInfoList) {
+      // Solo productos activos (state=1) con descripción
+      if (mi.state !== 1) continue;
+      if (!mi.description || mi.description.trim().length < 10) continue;
+
       // Filtrar por búsqueda si aplica
-      if (search && !product.name?.toLowerCase().includes(search.toLowerCase())) {
+      if (search && !mi.name?.toLowerCase().includes(search.toLowerCase())) {
         continue;
       }
 
-      // Usar name como descripción si description es null
-      const productDescription = product.description || product.name || "";
-
       try {
-        // Obtener variantes no mapeadas
-        const variants = await bsale.getVariants(product.id, 50);
-        for (const variant of variants) {
-          if (!mappedSet.has(variant.id)) {
-            const priceListId = parseInt(process.env.BSALE_PRICE_LIST_ID || "1");
-            const prices = await bsale.getPrices(variant.id, priceListId);
-            const price = prices[0]?.price || 0;
+        // Obtener producto v1 por productId
+        const productId = mi.productId;
+        const product = await bsale.getProduct(productId);
 
-            availableProducts.push({
-              bsale_product_id: product.id,
-              bsale_variant_id: variant.id,
-              name: variant.description || product.name,
-              description: productDescription,
-              sku: variant.code || String(variant.id),
-              bar_code: variant.barCode,
-              state: variant.state,
-              price,
-            });
+        // Obtener variantes del producto v1
+        const variants = await bsale.getVariants(productId, 50);
+
+        // Obtener imágenes del market_info
+        const imageUrls: string[] = [];
+        if (mi.urlImg) imageUrls.push(mi.urlImg);
+        if (Array.isArray(mi.pictures)) {
+          for (const pic of mi.pictures) {
+            if (pic.href) imageUrls.push(pic.href);
           }
         }
+
+        for (const variant of variants) {
+          // Solo variantes activas y no mapeadas
+          if (variant.state !== 0) continue;
+          if (mappedSet.has(variant.id)) continue;
+
+          // Obtener precio
+          let price = 0;
+          try {
+            const prices = await bsale.getPrices(variant.id, 1);
+            price = prices[0]?.price || 0;
+          } catch {
+            price = 0;
+          }
+
+          availableProducts.push({
+            bsale_product_id: productId,
+            bsale_variant_id: variant.id,
+            name: variant.description || mi.name || product.name,
+            description: mi.description,
+            sku: variant.code || String(variant.id),
+            bar_code: variant.barCode,
+            state: variant.state,
+            price,
+            images: imageUrls,
+            brand: mi.brand?.name || "",
+            category_id: mi.productType?.id || "",
+          });
+        }
       } catch (err: any) {
-        logger.warn(`[available] Error obteniendo variantes de producto ${product.id}: ${err.message}`);
+        logger.warn(`[available] Error procesando market_info ${mi.id}: ${err.message}`);
       }
     }
 
-    logger.info(`[available] Productos disponibles para publicar: ${availableProducts.length}`);
+    logger.info(`[available] Productos disponibles para publicar (con desc web + imagen): ${availableProducts.length}`);
 
     // Paginación
     const total = availableProducts.length;
@@ -153,32 +178,31 @@ router.get("/available", async (req, res, next) => {
 
 /**
  * GET /api/products/debug/:bsaleProductId
- * Debug: muestra información cruda de un producto en Bsale.
+ * Debug: muestra información cruda de un producto en Bsale (v1 + v2).
  */
 router.get("/debug/:bsaleProductId", async (req, res, next) => {
   try {
     const productId = parseInt(req.params.bsaleProductId);
     const bsale = new BsaleClient();
 
-    // Producto base
+    // Producto base v1
     const product = await bsale.getProduct(productId);
 
-    // Intentar market_info (puede fallar)
-    let marketInfo: any = null;
-    let marketError: string = "";
+    // Buscar market_info v2 por productId
+    let marketInfoV2: any = null;
     try {
-      marketInfo = await bsale.getMarketInfo(productId);
+      const list = await bsale.getMarketInfoListV2(50, 0);
+      marketInfoV2 = list.find((mi: any) => mi.productId === productId) || null;
     } catch (err: any) {
-      marketError = err.message;
+      logger.warn(`[debug] Error buscando market_info v2: ${err.message}`);
     }
 
-    // Variantes
+    // Variantes v1
     const variants = await bsale.getVariants(productId, 50);
 
     res.json({
       product,
-      marketInfo,
-      marketError,
+      marketInfoV2,
       variants,
     });
   } catch (err) {

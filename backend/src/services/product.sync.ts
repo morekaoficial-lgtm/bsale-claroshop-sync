@@ -15,17 +15,39 @@ export class ProductSyncService {
 
   /**
    * Publica productos seleccionados de Bsale a Claroshop (modo manual desde panel).
+   * Usa descripción web e imágenes de Bsale API v2 (market_info).
    */
   async publishToClaroshop(variantIds: number[]): Promise<
     Array<{ variantId: number; success: boolean; result?: string; error?: string }>
   > {
     const results: Array<{ variantId: number; success: boolean; result?: string; error?: string }> = [];
 
+    // Pre-cargar market_info v2 para mapear por productId
+    const marketInfoList = await this.bsale.getMarketInfoListV2(200, 0);
+    const marketInfoMap = new Map<number, any>();
+    for (const mi of marketInfoList) {
+      if (mi.productId) {
+        marketInfoMap.set(mi.productId, mi);
+      }
+    }
+
     for (const variantId of variantIds) {
       try {
         const variant = await this.bsale.getVariant(variantId);
         const product = await this.bsale.getProduct(variant.productId);
-        const result = await this.syncVariant(product, variant);
+        
+        // Buscar market_info v2 para este producto
+        const marketInfo = marketInfoMap.get(variant.productId);
+        const webDescription = marketInfo?.description || product.description || variant.description || product.name;
+        const webImages: string[] = [];
+        if (marketInfo?.urlImg) webImages.push(marketInfo.urlImg);
+        if (Array.isArray(marketInfo?.pictures)) {
+          for (const pic of marketInfo.pictures) {
+            if (pic.href) webImages.push(pic.href);
+          }
+        }
+
+        const result = await this.syncVariant(product, variant, webDescription, webImages);
         results.push({ variantId, success: result === "created" || result === "updated", result });
       } catch (err: any) {
         logger.error(`Error publicando variante ${variantId}: ${err.message}`);
@@ -82,27 +104,22 @@ export class ProductSyncService {
   }
 
   /**
-   * Sincroniza una variante específica (usado por webhooks).
+   * Sincroniza una variante específica (usado por webhooks y publicación manual).
+   * @param product - Producto Bsale v1
+   * @param variant - Variante Bsale v1
+   * @param description - Descripción web (opcional, de market_info v2)
+   * @param images - Imágenes web (opcional, de market_info v2)
    */
-  async syncVariant(product: any, variant: any): Promise<"created" | "updated" | "skipped" | "error"> {
+  async syncVariant(
+    product: any, 
+    variant: any, 
+    description?: string, 
+    images?: string[]
+  ): Promise<"created" | "updated" | "skipped" | "error"> {
     const bsaleVariantId = variant.id;
     const sku = variant.code || String(variant.id);
 
     try {
-      // Verificar si tiene descripción web y al menos una foto (regla de negocio)
-      if (!product.description && !variant.description) {
-        logger.warn(`Variante ${bsaleVariantId} sin descripción, saltando`);
-        await SyncLog.create({
-          sync_type: "product",
-          direction: "bsale_to_claroshop",
-          entity_id: String(bsaleVariantId),
-          entity_type: "variant",
-          status: "skipped",
-          message: "Sin descripción web",
-        });
-        return "skipped";
-      }
-
       // Buscar mapeo existente
       let mapping = await ProductMapping.findOne({ where: { bsale_variant_id: bsaleVariantId } });
 
@@ -114,10 +131,11 @@ export class ProductSyncService {
       const payload: ClaroshopProductPayload = {
         sku,
         title: variant.description || product.name,
-        description: product.description || variant.description,
+        description: description || product.description || variant.description || product.name,
         ean: variant.barCode,
         status: variant.state === 0 ? "active" : "inactive",
         price,
+        images: images || [],
       };
 
       if (mapping) {
@@ -127,6 +145,7 @@ export class ProductSyncService {
           name: payload.title,
           description: payload.description,
           price: price,
+          images: images || [],
           status: variant.state === 0 ? "synced" : "inactive",
           last_sync_at: new Date(),
           sync_error: undefined,
@@ -156,18 +175,10 @@ export class ProductSyncService {
           name: payload.title,
           description: payload.description,
           price: price,
+          images: images || [],
           status: "synced",
           last_sync_at: new Date(),
         });
-
-        // Guardar ID de Claro Shop en Bsale (si soporta atributos dinámicos)
-        try {
-          // Asume que existe un atributo dinámico con ID 1 para "claroshop_id"
-          // TODO: Configurar el ID real del atributo en settings
-          // await this.bsale.setProductAttribute(product.id, 1, String(claroshopProductId));
-        } catch {
-          // No crítico si falla
-        }
 
         await SyncLog.create({
           sync_type: "product",
