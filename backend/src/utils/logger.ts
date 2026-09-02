@@ -4,12 +4,32 @@ import path from "path";
 
 const { combine, timestamp, json } = winston.format;
 
+// Helper para stringify seguro que evita errores circulares
+function safeStringify(obj: any): string {
+  try {
+    return JSON.stringify(obj);
+  } catch {
+    try {
+      const cache = new Set();
+      return JSON.stringify(obj, (_key, value) => {
+        if (typeof value === "object" && value !== null) {
+          if (cache.has(value)) return "[Circular]";
+          cache.add(value);
+        }
+        return value;
+      });
+    } catch {
+      return String(obj);
+    }
+  }
+}
+
 // Transport para consola (siempre)
 const consoleTransport = new winston.transports.Console({
   format: combine(
     timestamp(),
     winston.format.printf(({ level, message, timestamp: ts, ...meta }) => {
-      const metaStr = Object.keys(meta).length ? JSON.stringify(meta) : "";
+      const metaStr = Object.keys(meta).length ? safeStringify(meta) : "";
       return `${ts} [${level.toUpperCase()}]: ${message} ${metaStr}`;
     })
   ),

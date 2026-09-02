@@ -74,8 +74,9 @@ router.post("/sync-all", async (_req, res, next) => {
 
 /**
  * GET /api/products/available
- * Lista productos de Bsale con DESCRIPCIÓN WEB + IMÁGENES (v2 market_info) que aún NO están en Claroshop.
- * Usa Bsale API v2 para obtener descripción web e imágenes.
+ * Lista productos de Bsale con DESCRIPCIÓN WEB + IMÁGENES (v2 market_info).
+ * Incluye estado de sincronización si existe (para ver errores y reintentar).
+ * Usa Bsale API v2 (cliente separado con baseURL https://api.bsale.io/v2).
  */
 router.get("/available", async (req, res, next) => {
   try {
@@ -87,16 +88,19 @@ router.get("/available", async (req, res, next) => {
 
     const bsale = new BsaleClient();
 
-    // Obtener market_info de Bsale v2 (productos con descripción web)
+    // Obtener market_info de Bsale v2 (productos con descripción web + imágenes)
     const marketInfoList = await bsale.getMarketInfoListV2(200, 0);
     logger.info(`[available] Bsale v2 devolvió ${marketInfoList.length} market_info`);
 
-    // Obtener IDs ya mapeados en Claroshop
-    const mappedIds = await ProductMapping.findAll({
-      attributes: ["bsale_variant_id"],
+    // Obtener TODOS los mapeos existentes (incluyendo errores para poder reintentar)
+    const allMappings = await ProductMapping.findAll({
+      attributes: ["bsale_variant_id", "status", "sync_error", "last_sync_at", "claroshop_product_id"],
     });
-    const mappedSet = new Set(mappedIds.map((m) => m.bsale_variant_id));
-    logger.info(`[available] Productos ya mapeados en Claroshop: ${mappedSet.size}`);
+    const mappingMap = new Map<number, any>();
+    for (const m of allMappings) {
+      mappingMap.set(m.bsale_variant_id, m);
+    }
+    logger.info(`[available] Mapeos existentes en DB: ${mappingMap.size}`);
 
     const availableProducts: any[] = [];
 
@@ -118,7 +122,7 @@ router.get("/available", async (req, res, next) => {
         // Obtener variantes del producto v1
         const variants = await bsale.getVariants(productId, 50);
 
-        // Obtener imágenes del market_info
+        // Obtener imágenes del market_info v2
         const imageUrls: string[] = [];
         if (mi.urlImg) imageUrls.push(mi.urlImg);
         if (Array.isArray(mi.pictures)) {
@@ -128,9 +132,10 @@ router.get("/available", async (req, res, next) => {
         }
 
         for (const variant of variants) {
-          // Solo variantes activas y no mapeadas
+          // Solo variantes activas
           if (variant.state !== 0) continue;
-          if (mappedSet.has(variant.id)) continue;
+
+          const existingMapping = mappingMap.get(variant.id);
 
           // Obtener precio
           let price = 0;
@@ -147,12 +152,20 @@ router.get("/available", async (req, res, next) => {
             name: variant.description || mi.name || product.name,
             description: mi.description,
             sku: variant.code || String(variant.id),
-            bar_code: variant.barCode,
+            bar_code: variant.barCode || "",
             state: variant.state,
             price,
             images: imageUrls,
             brand: mi.brand?.name || "",
             category_id: mi.productType?.id || "",
+            category_name: mi.productType?.name || "",
+            // Estado de sincronización
+            sync_status: existingMapping?.status || null,
+            sync_error: existingMapping?.sync_error || null,
+            last_sync_at: existingMapping?.last_sync_at || null,
+            claroshop_product_id: existingMapping?.claroshop_product_id || null,
+            is_synced: existingMapping?.status === "synced",
+            has_error: existingMapping?.status === "error",
           });
         }
       } catch (err: any) {

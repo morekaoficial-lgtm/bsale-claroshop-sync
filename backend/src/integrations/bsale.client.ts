@@ -38,10 +38,13 @@ export interface BsalePrice {
 
 export class BsaleClient {
   private client: AxiosInstance;
+  private clientV2: AxiosInstance;
   private accessToken: string;
 
   constructor(accessToken?: string, baseURL?: string) {
     this.accessToken = accessToken || process.env.BSALE_ACCESS_TOKEN || "";
+
+    // Cliente V1
     this.client = axios.create({
       baseURL: baseURL || process.env.BSALE_BASE_URL || "https://api.bsale.io/v1",
       headers: {
@@ -52,19 +55,31 @@ export class BsaleClient {
       timeout: 30000,
     });
 
-    // Rate limit: 8 req/segundo segun changelog Bsale 10/2025
-    this.client.interceptors.request.use(async (config: any) => {
-      await this.rateLimitDelay();
-      return config;
+    // Cliente V2 (para market_info, imágenes web, descripciones)
+    this.clientV2 = axios.create({
+      baseURL: "https://api.bsale.io/v2",
+      headers: {
+        access_token: this.accessToken,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      timeout: 30000,
     });
 
-    this.client.interceptors.response.use(
-      (response: any) => response,
-      (error: any) => {
-        logger.error("Bsale API error:", error.response?.data || error.message);
-        throw error;
-      }
-    );
+    // Rate limit: 8 req/segundo segun changelog Bsale 10/2025
+    const rateLimitInterceptor = async (config: any) => {
+      await this.rateLimitDelay();
+      return config;
+    };
+    this.client.interceptors.request.use(rateLimitInterceptor);
+    this.clientV2.interceptors.request.use(rateLimitInterceptor);
+
+    const errorInterceptor = (error: any) => {
+      logger.error("Bsale API error:", { message: error.message, data: error.response?.data });
+      throw error;
+    };
+    this.client.interceptors.response.use((response: any) => response, errorInterceptor);
+    this.clientV2.interceptors.response.use((response: any) => response, errorInterceptor);
   }
 
   private lastRequestTime = 0;
@@ -140,20 +155,26 @@ export class BsaleClient {
 
   // ── Descripción Web V2 (market_info) ──
   async getMarketInfoV2(marketInfoId: number): Promise<any> {
-    const res = await this.client.get(`/v2/products/market_info/${marketInfoId}.json`);
+    const res = await this.clientV2.get(`/products/market_info/${marketInfoId}.json`);
     return res.data?.data || null;
   }
 
   async getMarketInfoListV2(limit = 50, offset = 0): Promise<any[]> {
-    const res = await this.client.get(`/v2/products/list/market_info.json`, {
+    const res = await this.clientV2.get(`/products/list/market_info.json`, {
       params: { limit, offset },
     });
     return res.data?.data || [];
   }
 
   async getMarketInfoPicturesV2(marketInfoId: number): Promise<any[]> {
-    const res = await this.client.get(`/v2/products/market_info/${marketInfoId}/pictures.json`);
+    const res = await this.clientV2.get(`/products/market_info/${marketInfoId}/pictures.json`);
     return res.data?.data || [];
+  }
+
+  // ── Imágenes V1 ──
+  async getProductImages(productId: number): Promise<any[]> {
+    const res = await this.client.get(`/products/${productId}/images.json`);
+    return res.data?.items || [];
   }
 
   // ── Documentos / Órdenes ──

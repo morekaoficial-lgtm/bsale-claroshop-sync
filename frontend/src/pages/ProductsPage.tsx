@@ -4,6 +4,28 @@ import axios from "axios";
 const API_URL = import.meta.env.VITE_API_URL || "";
 
 type Tab = "synced" | "available";
+type SyncStatus = "synced" | "error" | "pending" | "inactive" | null;
+
+interface AvailableProduct {
+  bsale_variant_id: number;
+  bsale_product_id: number;
+  name: string;
+  description: string;
+  sku: string;
+  bar_code: string;
+  state: number;
+  price: number;
+  images: string[];
+  brand: string;
+  category_id: string;
+  category_name: string;
+  sync_status: SyncStatus;
+  sync_error: string | null;
+  last_sync_at: string | null;
+  claroshop_product_id: string | null;
+  is_synced: boolean;
+  has_error: boolean;
+}
 
 export default function ProductsPage() {
   // ── Tabs ──
@@ -18,7 +40,7 @@ export default function ProductsPage() {
   const [syncedLoading, setSyncedLoading] = useState(false);
 
   // ── Disponibles ──
-  const [availableProducts, setAvailableProducts] = useState<any[]>([]);
+  const [availableProducts, setAvailableProducts] = useState<AvailableProduct[]>([]);
   const [availablePage, setAvailablePage] = useState(1);
   const [availableTotalPages, setAvailableTotalPages] = useState(1);
   const [availableSearch, setAvailableSearch] = useState("");
@@ -26,6 +48,8 @@ export default function ProductsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [retryingId, setRetryingId] = useState<number | null>(null);
 
   const token = localStorage.getItem("token");
 
@@ -87,6 +111,21 @@ export default function ProductsPage() {
     }
   };
 
+  const retryAvailable = async (variantId: number) => {
+    setRetryingId(variantId);
+    try {
+      await axios.post(`${API_URL}/api/products/${variantId}/retry`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setPublishResult(`🔄 Reintento encolado para variante ${variantId}`);
+      setTimeout(() => fetchAvailable(), 2000);
+    } catch (err) {
+      setPublishResult(`❌ Error al reintentar variante ${variantId}`);
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
   const toggleSelect = (id: number) => {
     const next = new Set(selectedIds);
     if (next.has(id)) next.delete(id);
@@ -116,8 +155,7 @@ export default function ProductsPage() {
       const ok = results.filter((r) => r.success).length;
       const fail = results.filter((r) => !r.success).length;
       setPublishResult(`✅ ${ok} publicados, ❌ ${fail} errores`);
-      // Refrescar lista
-      fetchAvailable();
+      setTimeout(() => fetchAvailable(), 2000);
     } catch (err: any) {
       setPublishResult("❌ Error al publicar: " + (err.response?.data?.error || err.message));
     } finally {
@@ -132,6 +170,19 @@ export default function ProductsPage() {
       case "pending": return "#f39c12";
       default: return "#999";
     }
+  };
+
+  const getSyncStatusBadge = (product: AvailableProduct) => {
+    if (product.is_synced) {
+      return { text: "✅ Sincronizado", bg: "#d4edda", color: "#155724" };
+    }
+    if (product.has_error) {
+      return { text: "❌ Error", bg: "#f8d7da", color: "#721c24" };
+    }
+    if (product.sync_status === "pending") {
+      return { text: "⏳ Pendiente", bg: "#fff3cd", color: "#856404" };
+    }
+    return { text: "🆕 No publicado", bg: "#e2e3e5", color: "#383d41" };
   };
 
   return (
@@ -287,12 +338,19 @@ export default function ProductsPage() {
           </div>
 
           {publishResult && (
-            <div style={{ padding: 10, background: "#e8f8f5", borderRadius: 6, marginBottom: 12, color: "#27ae60", fontWeight: 600 }}>
+            <div style={{ 
+              padding: 10, 
+              background: publishResult.includes("❌") ? "#f8d7da" : "#e8f8f5", 
+              borderRadius: 6, 
+              marginBottom: 12, 
+              color: publishResult.includes("❌") ? "#721c24" : "#27ae60", 
+              fontWeight: 600 
+            }}>
               {publishResult}
             </div>
           )}
 
-          {/* Tabla */}
+          {/* Tabla mejorada */}
           <div style={{ background: "#fff", borderRadius: 8, overflow: "hidden" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
@@ -304,65 +362,257 @@ export default function ProductsPage() {
                       onChange={toggleSelectAll}
                     />
                   </th>
-                  <th style={thStyle}>ID Bsale</th>
-                  <th style={thStyle}>SKU</th>
-                  <th style={thStyle}>Nombre</th>
+                  <th style={thStyle}>Imagen</th>
+                  <th style={thStyle}>ID / SKU</th>
+                  <th style={thStyle}>Nombre y Descripción</th>
                   <th style={thStyle}>Precio</th>
-                  <th style={thStyle}>Código de barras</th>
-                  <th style={thStyle}>Estado</th>
+                  <th style={thStyle}>Características</th>
+                  <th style={thStyle}>Estado Sync</th>
+                  <th style={thStyle}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {availableLoading && (
-                  <tr><td colSpan={7} style={{ padding: 40, textAlign: "center" }}>Cargando productos de Bsale...</td></tr>
+                  <tr><td colSpan={8} style={{ padding: 40, textAlign: "center" }}>Cargando productos de Bsale...</td></tr>
                 )}
                 {!availableLoading && availableProducts.length === 0 && (
-                  <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "#999" }}>
+                  <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: "#999" }}>
                     No hay productos disponibles para publicar.
                   </td></tr>
                 )}
-                {!availableLoading && availableProducts.map((p) => (
-                  <tr
-                    key={p.bsale_variant_id}
-                    style={{
-                      borderBottom: "1px solid #eee",
-                      background: selectedIds.has(p.bsale_variant_id) ? "#e8f8f5" : "transparent",
-                      cursor: "pointer",
-                    }}
-                    onClick={() => toggleSelect(p.bsale_variant_id)}
-                  >
-                    <td style={tdStyle}>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(p.bsale_variant_id)}
-                        onChange={() => toggleSelect(p.bsale_variant_id)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </td>
-                    <td style={tdStyle}>{p.bsale_variant_id}</td>
-                    <td style={tdStyle}><code>{p.sku}</code></td>
-                    <td style={tdStyle}>
-                      <div style={{ fontWeight: 600 }}>{p.name}</div>
-                      <div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
-                        {p.description ? p.description.substring(0, 80) + "..." : "Sin descripción"}
-                      </div>
-                    </td>
-                    <td style={tdStyle}>${p.price || "-"}</td>
-                    <td style={tdStyle}>{p.bar_code || "-"}</td>
-                    <td style={tdStyle}>
-                      <span style={{
-                        padding: "2px 8px",
-                        borderRadius: 12,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        background: p.state === 0 ? "#d4edda" : "#f8d7da",
-                        color: p.state === 0 ? "#155724" : "#721c24",
-                      }}>
-                        {p.state === 0 ? "Activo" : "Inactivo"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {!availableLoading && availableProducts.map((p) => {
+                  const statusBadge = getSyncStatusBadge(p);
+                  const isExpanded = expandedId === p.bsale_variant_id;
+                  
+                  return (
+                    <>
+                      <tr
+                        key={p.bsale_variant_id}
+                        style={{
+                          borderBottom: "1px solid #eee",
+                          background: selectedIds.has(p.bsale_variant_id) ? "#e8f8f5" : "transparent",
+                        }}
+                      >
+                        <td style={tdStyle}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(p.bsale_variant_id)}
+                            onChange={() => toggleSelect(p.bsale_variant_id)}
+                          />
+                        </td>
+                        <td style={tdStyle}>
+                          {p.images && p.images.length > 0 ? (
+                            <div style={{ position: "relative" }}>
+                              <img
+                                src={p.images[0]}
+                                alt={p.name}
+                                style={{ width: 50, height: 50, objectFit: "cover", borderRadius: 4, cursor: "pointer" }}
+                                onClick={() => setExpandedId(isExpanded ? null : p.bsale_variant_id)}
+                              />
+                              {p.images.length > 1 && (
+                                <span style={{
+                                  position: "absolute",
+                                  bottom: -2,
+                                  right: -2,
+                                  background: "#3498db",
+                                  color: "#fff",
+                                  borderRadius: "50%",
+                                  width: 18,
+                                  height: 18,
+                                  fontSize: 10,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                }}>
+                                  +{p.images.length - 1}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ width: 50, height: 50, background: "#f0f0f0", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#999" }}>
+                              Sin img
+                            </div>
+                          )}
+                        </td>
+                        <td style={tdStyle}>
+                          <div style={{ fontSize: 11, color: "#666" }}>ID: {p.bsale_variant_id}</div>
+                          <code style={{ fontSize: 12 }}>{p.sku}</code>
+                          {p.bar_code && <div style={{ fontSize: 10, color: "#999" }}>EAN: {p.bar_code}</div>}
+                        </td>
+                        <td style={tdStyle}>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
+                          <div style={{ fontSize: 11, color: "#666", marginTop: 2, maxWidth: 250 }}>
+                            {p.description ? p.description.substring(0, 100) + (p.description.length > 100 ? "..." : "") : "Sin descripción"}
+                          </div>
+                          <button
+                            onClick={() => setExpandedId(isExpanded ? null : p.bsale_variant_id)}
+                            style={{
+                              marginTop: 4,
+                              padding: "2px 8px",
+                              fontSize: 11,
+                              background: "#f8f9fa",
+                              border: "1px solid #ddd",
+                              borderRadius: 4,
+                              cursor: "pointer",
+                              color: "#3498db",
+                            }}
+                          >
+                            {isExpanded ? "▲ Ocultar detalles" : "▼ Ver detalles"}
+                          </button>
+                        </td>
+                        <td style={tdStyle}>
+                          <div style={{ fontWeight: 600 }}>${p.price || "-"}</div>
+                        </td>
+                        <td style={tdStyle}>
+                          <div style={{ fontSize: 11 }}>
+                            {p.brand && <div>🏷️ <strong>Marca:</strong> {p.brand}</div>}
+                            {p.category_name && <div>📁 <strong>Cat:</strong> {p.category_name}</div>}
+                            {p.category_id && <div style={{ color: "#999" }}>ID: {p.category_id}</div>}
+                          </div>
+                        </td>
+                        <td style={tdStyle}>
+                          <span style={{
+                            padding: "4px 10px",
+                            borderRadius: 12,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            background: statusBadge.bg,
+                            color: statusBadge.color,
+                            display: "inline-block",
+                          }}>
+                            {statusBadge.text}
+                          </span>
+                          {p.last_sync_at && (
+                            <div style={{ fontSize: 10, color: "#999", marginTop: 4 }}>
+                              {new Date(p.last_sync_at).toLocaleString()}
+                            </div>
+                          )}
+                          {p.sync_error && (
+                            <div style={{ fontSize: 10, color: "#e74c3c", marginTop: 4, maxWidth: 150 }}>
+                              ⚠️ {p.sync_error.substring(0, 60)}{p.sync_error.length > 60 ? "..." : ""}
+                            </div>
+                          )}
+                        </td>
+                        <td style={tdStyle}>
+                          {p.has_error && (
+                            <button
+                              onClick={() => retryAvailable(p.bsale_variant_id)}
+                              disabled={retryingId === p.bsale_variant_id}
+                              style={{
+                                padding: "4px 10px",
+                                background: retryingId === p.bsale_variant_id ? "#bdc3c7" : "#e74c3c",
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: 4,
+                                cursor: retryingId === p.bsale_variant_id ? "not-allowed" : "pointer",
+                                fontSize: 11,
+                                marginBottom: 4,
+                              }}
+                            >
+                              {retryingId === p.bsale_variant_id ? "⏳..." : "🔄 Reintentar"}
+                            </button>
+                          )}
+                          {p.is_synced && p.claroshop_product_id && (
+                            <div style={{ fontSize: 10, color: "#27ae60" }}>
+                              ID: {p.claroshop_product_id}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                      
+                      {/* Fila expandida con detalles completos */}
+                      {isExpanded && (
+                        <tr style={{ background: "#f8f9fa" }}>
+                          <td colSpan={8} style={{ padding: 16 }}>
+                            <div style={{ display: "flex", gap: 20 }}>
+                              {/* Imágenes */}
+                              <div style={{ flexShrink: 0 }}>
+                                <h4 style={{ margin: "0 0 8px 0", fontSize: 13 }}>🖼️ Imágenes ({p.images?.length || 0})</h4>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  {p.images && p.images.map((img, idx) => (
+                                    <img
+                                      key={idx}
+                                      src={img}
+                                      alt={`${p.name} - ${idx}`}
+                                      style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 4, border: "1px solid #ddd" }}
+                                    />
+                                  ))}
+                                  {(!p.images || p.images.length === 0) && (
+                                    <span style={{ color: "#999", fontSize: 12 }}>No hay imágenes</span>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              {/* Detalles */}
+                              <div style={{ flex: 1 }}>
+                                <h4 style={{ margin: "0 0 8px 0", fontSize: 13 }}>📝 Descripción completa</h4>
+                                <div style={{
+                                  padding: 10,
+                                  background: "#fff",
+                                  borderRadius: 4,
+                                  border: "1px solid #e0e0e0",
+                                  fontSize: 12,
+                                  maxHeight: 150,
+                                  overflow: "auto",
+                                  whiteSpace: "pre-wrap",
+                                }}>
+                                  {p.description || "Sin descripción"}
+                                </div>
+                                
+                                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                                  <div style={{ fontSize: 12 }}>
+                                    <strong>Marca:</strong> {p.brand || "No especificada"}
+                                  </div>
+                                  <div style={{ fontSize: 12 }}>
+                                    <strong>Categoría:</strong> {p.category_name || "No especificada"} {p.category_id && `(ID: ${p.category_id})`}
+                                  </div>
+                                  <div style={{ fontSize: 12 }}>
+                                    <strong>Precio:</strong> ${p.price || "-"}
+                                  </div>
+                                  <div style={{ fontSize: 12 }}>
+                                    <strong>Código de barras:</strong> {p.bar_code || "-"}
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              {/* Estado */}
+                              <div style={{ flexShrink: 0, minWidth: 150 }}>
+                                <h4 style={{ margin: "0 0 8px 0", fontSize: 13 }}>📊 Estado de Sync</h4>
+                                <div style={{
+                                  padding: 10,
+                                  background: statusBadge.bg,
+                                  borderRadius: 4,
+                                  fontSize: 12,
+                                  color: statusBadge.color,
+                                }}>
+                                  <div style={{ fontWeight: 600 }}>{statusBadge.text}</div>
+                                  {p.last_sync_at && (
+                                    <div style={{ marginTop: 4 }}>
+                                      Último intento:<br/>
+                                      {new Date(p.last_sync_at).toLocaleString()}
+                                    </div>
+                                  )}
+                                  {p.sync_error && (
+                                    <div style={{ marginTop: 8, color: "#721c24" }}>
+                                      <strong>Error:</strong><br/>
+                                      {p.sync_error}
+                                    </div>
+                                  )}
+                                  {p.is_synced && p.claroshop_product_id && (
+                                    <div style={{ marginTop: 4 }}>
+                                      <strong>Claroshop ID:</strong><br/>
+                                      {p.claroshop_product_id}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  );
+                })}
               </tbody>
             </table>
           </div>
