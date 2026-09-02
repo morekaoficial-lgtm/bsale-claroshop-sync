@@ -121,8 +121,11 @@ export class BsaleClient {
     const params: Record<string, number> = {};
     if (priceListId) params.price_list_id = priceListId;
     const res = await this.client.get(`/variants/${variantId}.json`, { params });
-    // Los precios vienen en expand=prices
-    const prices = res.data.prices || [];
+    // Los precios pueden venir en diferentes formatos según la respuesta de Bsale
+    let prices = res.data.prices || res.data.price || [];
+    if (!Array.isArray(prices)) {
+      prices = [];
+    }
     return prices.map((p: any) => ({
       variantId,
       priceListId: p.priceListId,
@@ -137,7 +140,7 @@ export class BsaleClient {
 
   // ── Descripción Web (Market Info) ──
   async getMarketInfo(productId: number): Promise<any> {
-    const res = await this.client.get(`/products/market_info/${productId}.json`);
+    const res = await this.client.get(`/products/${productId}/market_info.json`);
     return res.data;
   }
 

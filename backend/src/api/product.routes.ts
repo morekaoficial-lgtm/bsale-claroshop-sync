@@ -74,7 +74,9 @@ router.post("/sync-all", async (_req, res, next) => {
 
 /**
  * GET /api/products/available
- * Lista productos de Bsale con DESCRIPCIÓN WEB + IMÁGENES que aún NO están en Claroshop.
+ * Lista productos de Bsale activos que aún NO están en Claroshop.
+ * NOTA: Bsale API v1 no expone descripción web ni imágenes en el endpoint base.
+ * Se muestran todos los productos activos no mapeados para que el usuario seleccione.
  */
 router.get("/available", async (req, res, next) => {
   try {
@@ -82,7 +84,7 @@ router.get("/available", async (req, res, next) => {
     const limit = parseInt(req.query.limit as string) || 25;
     const search = (req.query.search as string) || "";
 
-    logger.info(`[available] Buscando productos de Bsale completos (desc web + imagen) - page=${page}, limit=${limit}, search="${search}"`);
+    logger.info(`[available] Buscando productos de Bsale - page=${page}, limit=${limit}, search="${search}"`);
 
     // Obtener productos de Bsale (activos)
     const bsale = new BsaleClient();
@@ -104,37 +106,10 @@ router.get("/available", async (req, res, next) => {
         continue;
       }
 
+      // Usar name como descripción si description es null
+      const productDescription = product.description || product.name || "";
+
       try {
-        // Obtener descripción web (market_info) - contiene descripción + imágenes
-        const marketInfo = await bsale.getMarketInfo(product.id);
-        const webDescription = marketInfo?.description || marketInfo?.data?.description || "";
-        const urlImg = marketInfo?.urlImg || marketInfo?.data?.urlImg || "";
-        const pictures = marketInfo?.pictures || marketInfo?.data?.pictures || [];
-
-        // Verificar que tenga descripción web
-        if (!webDescription || webDescription.trim().length < 10) {
-          logger.debug(`[available] Producto ${product.id} sin descripción web suficiente`);
-          continue;
-        }
-
-        // Verificar que tenga al menos una imagen
-        const hasImages = urlImg || (Array.isArray(pictures) && pictures.length > 0);
-        if (!hasImages) {
-          logger.debug(`[available] Producto ${product.id} sin imágenes`);
-          continue;
-        }
-
-        // Obtener imágenes como array de URLs
-        const imageUrls: string[] = [];
-        if (urlImg) imageUrls.push(urlImg);
-        if (Array.isArray(pictures)) {
-          for (const pic of pictures) {
-            if (pic.href || pic.urlImg) {
-              imageUrls.push(pic.href || pic.urlImg);
-            }
-          }
-        }
-
         // Obtener variantes no mapeadas
         const variants = await bsale.getVariants(product.id, 50);
         for (const variant of variants) {
@@ -147,21 +122,20 @@ router.get("/available", async (req, res, next) => {
               bsale_product_id: product.id,
               bsale_variant_id: variant.id,
               name: variant.description || product.name,
-              description: webDescription,
+              description: productDescription,
               sku: variant.code || String(variant.id),
               bar_code: variant.barCode,
               state: variant.state,
               price,
-              images: imageUrls,
             });
           }
         }
       } catch (err: any) {
-        logger.warn(`[available] Error obteniendo market_info de producto ${product.id}: ${err.message}`);
+        logger.warn(`[available] Error obteniendo variantes de producto ${product.id}: ${err.message}`);
       }
     }
 
-    logger.info(`[available] Productos disponibles para publicar (con desc web + imagen): ${availableProducts.length}`);
+    logger.info(`[available] Productos disponibles para publicar: ${availableProducts.length}`);
 
     // Paginación
     const total = availableProducts.length;
@@ -171,6 +145,41 @@ router.get("/available", async (req, res, next) => {
     res.json({
       products: paginated,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/products/debug/:bsaleProductId
+ * Debug: muestra información cruda de un producto en Bsale.
+ */
+router.get("/debug/:bsaleProductId", async (req, res, next) => {
+  try {
+    const productId = parseInt(req.params.bsaleProductId);
+    const bsale = new BsaleClient();
+
+    // Producto base
+    const product = await bsale.getProduct(productId);
+
+    // Intentar market_info (puede fallar)
+    let marketInfo: any = null;
+    let marketError: string = "";
+    try {
+      marketInfo = await bsale.getMarketInfo(productId);
+    } catch (err: any) {
+      marketError = err.message;
+    }
+
+    // Variantes
+    const variants = await bsale.getVariants(productId, 50);
+
+    res.json({
+      product,
+      marketInfo,
+      marketError,
+      variants,
     });
   } catch (err) {
     next(err);

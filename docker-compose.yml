@@ -57,7 +57,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-wh_secret}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
-      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8081}
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,7 +66,7 @@ services:
     networks:
       - bcs-network
     ports:
-      - "127.0.0.1:3001:3000"
+      - "127.0.0.1:3002:3000"
     volumes:
       - ./logs:/app/logs
 
@@ -81,7 +81,7 @@ services:
     networks:
       - bcs-network
     ports:
-      - "8080:80"
+      - "8081:80"
 
 volumes:
   postgres_data:
