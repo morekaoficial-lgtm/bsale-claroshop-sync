@@ -76,23 +76,25 @@ router.post("/sync-all", async (_req, res, next) => {
  * GET /api/products/available
  * Lista productos de Bsale con DESCRIPCIÓN WEB + IMÁGENES (v2 market_info).
  * Incluye estado de sincronización si existe (para ver errores y reintentar).
- * Usa Bsale API v2 (cliente separado con baseURL https://api.bsale.io/v2).
+ * Usa Bsale API v2 con paginación real (limit=50 + offset).
  */
 router.get("/available", async (req, res, next) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 25;
+    const limit = Math.min(parseInt(req.query.limit as string) || 25, 50);
     const search = (req.query.search as string) || "";
 
-    logger.info(`[available] Buscando productos de Bsale con desc web (v2) - page=${page}, limit=${limit}, search="${search}"`);
+    const offset = (page - 1) * limit;
+
+    logger.info(`[available] Buscando productos Bsale v2 - page=${page}, limit=${limit}, offset=${offset}, search="${search}"`);
 
     const bsale = new BsaleClient();
 
-    // Obtener market_info de Bsale v2 (productos con descripción web + imágenes)
-    const marketInfoList = await bsale.getMarketInfoListV2(200, 0);
-    logger.info(`[available] Bsale v2 devolvió ${marketInfoList.length} market_info`);
+    // Obtener market_info de Bsale v2 paginado (solo los que necesitamos)
+    const marketInfoList = await bsale.getMarketInfoListV2(limit, offset);
+    logger.info(`[available] Bsale v2 devolvió ${marketInfoList.length} market_info (offset=${offset})`);
 
-    // Obtener TODOS los mapeos existentes (incluyendo errores para poder reintentar)
+    // Obtener mapeos existentes
     const allMappings = await ProductMapping.findAll({
       attributes: ["bsale_variant_id", "status", "sync_error", "last_sync_at", "claroshop_product_id"],
     });
@@ -100,7 +102,6 @@ router.get("/available", async (req, res, next) => {
     for (const m of allMappings) {
       mappingMap.set(m.bsale_variant_id, m);
     }
-    logger.info(`[available] Mapeos existentes en DB: ${mappingMap.size}`);
 
     const availableProducts: any[] = [];
 
@@ -159,7 +160,6 @@ router.get("/available", async (req, res, next) => {
             brand: mi.brand?.name || "",
             category_id: mi.productType?.id || "",
             category_name: mi.productType?.name || "",
-            // Estado de sincronización
             sync_status: existingMapping?.status || null,
             sync_error: existingMapping?.sync_error || null,
             last_sync_at: existingMapping?.last_sync_at || null,
@@ -173,16 +173,14 @@ router.get("/available", async (req, res, next) => {
       }
     }
 
-    logger.info(`[available] Productos disponibles para publicar (con desc web + imagen): ${availableProducts.length}`);
+    logger.info(`[available] Productos procesados: ${availableProducts.length}`);
 
-    // Paginación
-    const total = availableProducts.length;
-    const start = (page - 1) * limit;
-    const paginated = availableProducts.slice(start, start + limit);
+    // Si devolvió exactamente 'limit' items, asumimos que hay más páginas
+    const hasMore = marketInfoList.length >= limit;
 
     res.json({
-      products: paginated,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      products: availableProducts,
+      pagination: { page, limit, hasMore },
     });
   } catch (err) {
     next(err);

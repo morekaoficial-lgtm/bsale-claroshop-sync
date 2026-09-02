@@ -42,7 +42,7 @@ export default function ProductsPage() {
   // ── Disponibles ──
   const [availableProducts, setAvailableProducts] = useState<AvailableProduct[]>([]);
   const [availablePage, setAvailablePage] = useState(1);
-  const [availableTotalPages, setAvailableTotalPages] = useState(1);
+  const [availableHasMore, setAvailableHasMore] = useState(false);
   const [availableSearch, setAvailableSearch] = useState("");
   const [availableLoading, setAvailableLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -91,7 +91,7 @@ export default function ProductsPage() {
         params: { page: availablePage, limit: 25, search: availableSearch },
       });
       setAvailableProducts(res.data.products);
-      setAvailableTotalPages(res.data.pagination.totalPages);
+      setAvailableHasMore(res.data.pagination.hasMore);
     } catch (err) {
       console.error(err);
     } finally {
@@ -620,8 +620,8 @@ export default function ProductsPage() {
           {/* Paginación */}
           <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 16 }}>
             <button disabled={availablePage <= 1} onClick={() => setAvailablePage(availablePage - 1)} style={pageBtnStyle}>← Anterior</button>
-            <span style={{ padding: "8px 16px" }}>Página {availablePage} de {availableTotalPages}</span>
-            <button disabled={availablePage >= availableTotalPages} onClick={() => setAvailablePage(availablePage + 1)} style={pageBtnStyle}>Siguiente →</button>
+            <span style={{ padding: "8px 16px" }}>Página {availablePage}</span>
+            <button disabled={!availableHasMore} onClick={() => setAvailablePage(availablePage + 1)} style={pageBtnStyle}>Siguiente →</button>
           </div>
         </>
       )}
